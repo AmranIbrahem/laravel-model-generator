@@ -172,7 +172,7 @@ class GenerateModelsCommand extends Command
                 $relationshipName = strtolower($relatedModel);
 
                 // belongsTo relationship
-                $relationships .= "\n    public function {$relationshipName}()\n    {\n        return \$this->belongsTo({$relatedModel}::class, '{$fk->COLUMN_NAME}', '{$fk->REFERENCED_COLUMN_NAME}');\n    }";
+                $relationships .= "\n    /**\n     * Get the {$relatedModel} that owns the {$this->getClassName($tableName)}.\n     */\n    public function {$relationshipName}()\n    {\n        return \$this->belongsTo({$relatedModel}::class, '{$fk->COLUMN_NAME}', '{$fk->REFERENCED_COLUMN_NAME}');\n    }";
             }
 
             $referencingTables = DB::select("
@@ -190,7 +190,7 @@ class GenerateModelsCommand extends Command
                 $relatedModel = $this->getClassName($ref->TABLE_NAME);
                 $relationshipName = strtolower(str_replace('_', '', $ref->TABLE_NAME));
 
-                $relationships .= "\n    public function {$relationshipName}()\n    {\n        return \$this->hasMany({$relatedModel}::class, '{$ref->COLUMN_NAME}', 'id');\n    }";
+                $relationships .= "\n    /**\n     * Get all the {$relatedModel} for the {$this->getClassName($tableName)}.\n     */\n    public function {$relationshipName}()\n    {\n        return \$this->hasMany({$relatedModel}::class, '{$ref->COLUMN_NAME}', 'id');\n    }";
             }
 
         } catch (Exception $e) {
@@ -203,7 +203,7 @@ class GenerateModelsCommand extends Command
     protected function buildModelContent($className, $namespace, $tableName, $fillable, $casts, $relationships)
     {
         $fillableString = $this->arrayToString($fillable);
-        $castsString = !empty($casts) ? "    protected \$casts = " . $this->arrayToString($casts, true) . ";\n" : '';
+        $castsString = !empty($casts) ? $this->buildCastsProperty($casts) : '';
 
         return "<?php
 
@@ -216,11 +216,35 @@ class {$className} extends Model
 {
     use HasFactory;
 
+    /**
+     * The table associated with the model.
+     *
+     * @var string
+     */
     protected \$table = '{$tableName}';
 
+    /**
+     * The attributes that are mass assignable.
+     *
+     * @var array<int, string>
+     */
     protected \$fillable = {$fillableString};
 {$castsString}{$relationships}
 }";
+    }
+
+    protected function buildCastsProperty($casts)
+    {
+        $castsString = $this->arrayToString($casts, true);
+
+        return "
+    /**
+     * The attributes that should be cast.
+     *
+     * @var array<string, string>
+     */
+    protected \$casts = {$castsString};
+";
     }
 
     protected function arrayToString($array, $isAssociative = false)
