@@ -225,6 +225,23 @@ class GenerateModelsCommand extends Command
         return $matches[1] ?? '';
     }
 
+    protected function extractExistingMethodNames($relationships)
+    {
+        preg_match_all('/public function (\w+)\(\)/', $relationships, $matches);
+        return $matches[1] ?? [];
+    }
+
+    protected function addRelationshipIfNotExists(&$relationships, $existingMethods, $methodName, $relationshipCode)
+    {
+        $methodNameLower = strtolower($methodName);
+        $existingMethodsLower = array_map('strtolower', $existingMethods);
+
+        if (!in_array($methodNameLower, $existingMethodsLower)) {
+            $relationships .= $relationshipCode;
+            $existingMethods[] = $methodName;
+        }
+    }
+
     protected function getClassName($tableName)
     {
         $singular = $this->getSingular($tableName);
@@ -314,6 +331,7 @@ class GenerateModelsCommand extends Command
     protected function getRelationships($tableName)
     {
         $relationships = '';
+        $existingMethods = [];
 
         try {
             $foreignKeys = DB::select("
@@ -334,8 +352,9 @@ class GenerateModelsCommand extends Command
                 $relatedModel = $this->getClassName($fk->REFERENCED_TABLE_NAME);
                 $relationshipName = $this->getRelationshipName($fk->COLUMN_NAME, $relatedModel);
 
-                if (!$this->relationshipExists($relationships, $relationshipName)) {
+                if (!$this->relationshipExistsCaseInsensitive($relationships, $relationshipName)) {
                     $relationships .= "\n    /**\n     * Get the {$relatedModel} that owns the {$this->getClassName($tableName)}.\n     */\n    public function {$relationshipName}()\n    {\n        return \$this->belongsTo({$relatedModel}::class, '{$fk->COLUMN_NAME}', '{$fk->REFERENCED_COLUMN_NAME}');\n    }";
+                    $existingMethods[] = $relationshipName;
                 }
             }
 
@@ -354,12 +373,13 @@ class GenerateModelsCommand extends Command
                 $relatedModel = $this->getClassName($ref->TABLE_NAME);
                 $relationshipName = $this->getPlural($relatedModel);
 
-                if (!$this->relationshipExists($relationships, $relationshipName)) {
+                if (!$this->relationshipExistsCaseInsensitive($relationships, $relationshipName)) {
                     $relationships .= "\n    /**\n     * Get all the {$relatedModel} for the {$this->getClassName($tableName)}.\n     */\n    public function {$relationshipName}()\n    {\n        return \$this->hasMany({$relatedModel}::class, '{$ref->COLUMN_NAME}', 'id');\n    }";
+                    $existingMethods[] = $relationshipName;
                 }
             }
 
-            $this->addSpecialRelationships($tableName, $relationships);
+            $this->addSpecialRelationships($tableName, $relationships, $existingMethods);
 
         } catch (Exception $e) {
             $this->warn("⚠️ Could not generate relationships for {$tableName}: " . $e->getMessage());
@@ -368,24 +388,50 @@ class GenerateModelsCommand extends Command
         return $relationships;
     }
 
-    protected function addSpecialRelationships($tableName, &$relationships)
+    protected function addSpecialRelationships($tableName, &$relationships, $existingMethods = [])
     {
+        if (empty($existingMethods)) {
+            $existingMethods = $this->extractExistingMethodNames($relationships);
+        }
+
         switch ($tableName) {
             case 'users':
-                if (!$this->relationshipExists($relationships, 'favorites')) {
-                    $relationships .= "\n    /**\n     * Get all the Favorite for the User.\n     */\n    public function favorites()\n    {\n        return \$this->hasMany(Favorite::class, 'user_id', 'id');\n    }";
-                }
-                if (!$this->relationshipExists($relationships, 'profiles')) {
-                    $relationships .= "\n    /**\n     * Get all the Profile for the User.\n     */\n    public function profiles()\n    {\n        return \$this->hasMany(Profile::class, 'user_id', 'id');\n    }";
-                }
+                $this->addRelationshipIfNotExists($relationships, $existingMethods, 'favorites', "
+    /**
+     * Get all the Favorite for the User.
+     */
+    public function favorites()
+    {
+        return \$this->hasMany(Favorite::class, 'user_id', 'id');
+    }");
+
+                $this->addRelationshipIfNotExists($relationships, $existingMethods, 'profiles', "
+    /**
+     * Get all the Profile for the User.
+     */
+    public function profiles()
+    {
+        return \$this->hasMany(Profile::class, 'user_id', 'id');
+    }");
                 break;
 
             case 'products':
-                if (!$this->relationshipExists($relationships, 'favorites')) {
-                    $relationships .= "\n    /**\n     * Get all the Favorite for the Product.\n     */\n    public function favorites()\n    {\n        return \$this->hasMany(Favorite::class, 'product_id', 'id');\n    }";
-                }
+                $this->addRelationshipIfNotExists($relationships, $existingMethods, 'favorites', "
+    /**
+     * Get all the Favorite for the Product.
+     */
+    public function favorites()
+    {
+        return \$this->hasMany(Favorite::class, 'product_id', 'id');
+    }");
                 break;
         }
+    }
+
+    protected function relationshipExistsCaseInsensitive($relationships, $relationshipName)
+    {
+        $pattern = '/public function\s+(' . preg_quote($relationshipName, '/') . ')\s*\(\)/i';
+        return preg_match($pattern, $relationships);
     }
 
     protected function relationshipExists($relationships, $relationshipName)
