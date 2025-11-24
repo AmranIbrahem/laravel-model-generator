@@ -188,7 +188,7 @@ class GenerateModelsCommand extends Command
 
             foreach ($referencingTables as $ref) {
                 $relatedModel = $this->getClassName($ref->TABLE_NAME);
-                $relationshipName = strtolower(str_replace('_', '', $ref->TABLE_NAME)); // مثال: orders -> orders
+                $relationshipName = strtolower(str_replace('_', '', $ref->TABLE_NAME));
 
                 $relationships .= "\n    public function {$relationshipName}()\n    {\n        return \$this->hasMany({$relatedModel}::class, '{$ref->COLUMN_NAME}', 'id');\n    }";
             }
@@ -203,7 +203,7 @@ class GenerateModelsCommand extends Command
     protected function buildModelContent($className, $namespace, $tableName, $fillable, $casts, $relationships)
     {
         $fillableString = $this->arrayToString($fillable);
-        $castsString = $this->arrayToString($casts, true);
+        $castsString = !empty($casts) ? "    protected \$casts = " . $this->arrayToString($casts, true) . ";\n" : '';
 
         return "<?php
 
@@ -219,7 +219,7 @@ class {$className} extends Model
     protected \$table = '{$tableName}';
 
     protected \$fillable = {$fillableString};
-    {$castsString}{$relationships}
+{$castsString}{$relationships}
 }";
     }
 
