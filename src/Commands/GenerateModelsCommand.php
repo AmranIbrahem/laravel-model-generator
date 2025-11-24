@@ -189,7 +189,7 @@ class GenerateModelsCommand extends Command
 
             foreach ($relationshipMethods as $method) {
                 $methodName = $this->extractMethodName($method);
-                if (!str_contains($content, "function {$methodName}()")) {
+                if (!$this->methodExistsCaseInsensitive($content, $methodName)) {
                     $lastBrace = strrpos($content, '}');
                     if ($lastBrace !== false) {
                         $content = substr($content, 0, $lastBrace) . $method . "\n" . substr($content, $lastBrace);
@@ -225,21 +225,10 @@ class GenerateModelsCommand extends Command
         return $matches[1] ?? '';
     }
 
-    protected function extractExistingMethodNames($relationships)
+    protected function methodExistsCaseInsensitive($content, $methodName)
     {
-        preg_match_all('/public function (\w+)\(\)/', $relationships, $matches);
-        return $matches[1] ?? [];
-    }
-
-    protected function addRelationshipIfNotExists(&$relationships, $existingMethods, $methodName, $relationshipCode)
-    {
-        $methodNameLower = strtolower($methodName);
-        $existingMethodsLower = array_map('strtolower', $existingMethods);
-
-        if (!in_array($methodNameLower, $existingMethodsLower)) {
-            $relationships .= $relationshipCode;
-            $existingMethods[] = $methodName;
-        }
+        $pattern = '/public\s+function\s+(' . preg_quote($methodName, '/') . ')\s*\(\)/i';
+        return preg_match($pattern, $content);
     }
 
     protected function getClassName($tableName)
@@ -331,7 +320,6 @@ class GenerateModelsCommand extends Command
     protected function getRelationships($tableName)
     {
         $relationships = '';
-        $existingMethods = [];
 
         try {
             $foreignKeys = DB::select("
@@ -354,7 +342,6 @@ class GenerateModelsCommand extends Command
 
                 if (!$this->relationshipExistsCaseInsensitive($relationships, $relationshipName)) {
                     $relationships .= "\n    /**\n     * Get the {$relatedModel} that owns the {$this->getClassName($tableName)}.\n     */\n    public function {$relationshipName}()\n    {\n        return \$this->belongsTo({$relatedModel}::class, '{$fk->COLUMN_NAME}', '{$fk->REFERENCED_COLUMN_NAME}');\n    }";
-                    $existingMethods[] = $relationshipName;
                 }
             }
 
@@ -375,11 +362,8 @@ class GenerateModelsCommand extends Command
 
                 if (!$this->relationshipExistsCaseInsensitive($relationships, $relationshipName)) {
                     $relationships .= "\n    /**\n     * Get all the {$relatedModel} for the {$this->getClassName($tableName)}.\n     */\n    public function {$relationshipName}()\n    {\n        return \$this->hasMany({$relatedModel}::class, '{$ref->COLUMN_NAME}', 'id');\n    }";
-                    $existingMethods[] = $relationshipName;
                 }
             }
-
-            $this->addSpecialRelationships($tableName, $relationships, $existingMethods);
 
         } catch (Exception $e) {
             $this->warn("⚠️ Could not generate relationships for {$tableName}: " . $e->getMessage());
@@ -388,55 +372,10 @@ class GenerateModelsCommand extends Command
         return $relationships;
     }
 
-    protected function addSpecialRelationships($tableName, &$relationships, $existingMethods = [])
-    {
-        if (empty($existingMethods)) {
-            $existingMethods = $this->extractExistingMethodNames($relationships);
-        }
-
-        switch ($tableName) {
-            case 'users':
-                $this->addRelationshipIfNotExists($relationships, $existingMethods, 'favorites', "
-    /**
-     * Get all the Favorite for the User.
-     */
-    public function favorites()
-    {
-        return \$this->hasMany(Favorite::class, 'user_id', 'id');
-    }");
-
-                $this->addRelationshipIfNotExists($relationships, $existingMethods, 'profiles', "
-    /**
-     * Get all the Profile for the User.
-     */
-    public function profiles()
-    {
-        return \$this->hasMany(Profile::class, 'user_id', 'id');
-    }");
-                break;
-
-            case 'products':
-                $this->addRelationshipIfNotExists($relationships, $existingMethods, 'favorites', "
-    /**
-     * Get all the Favorite for the Product.
-     */
-    public function favorites()
-    {
-        return \$this->hasMany(Favorite::class, 'product_id', 'id');
-    }");
-                break;
-        }
-    }
-
     protected function relationshipExistsCaseInsensitive($relationships, $relationshipName)
     {
-        $pattern = '/public function\s+(' . preg_quote($relationshipName, '/') . ')\s*\(\)/i';
+        $pattern = '/public\s+function\s+(' . preg_quote($relationshipName, '/') . ')\s*\(\)/i';
         return preg_match($pattern, $relationships);
-    }
-
-    protected function relationshipExists($relationships, $relationshipName)
-    {
-        return str_contains($relationships, "function {$relationshipName}()");
     }
 
     protected function getRelationshipName($columnName, $relatedModel)
