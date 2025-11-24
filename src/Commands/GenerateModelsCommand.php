@@ -13,7 +13,8 @@ class GenerateModelsCommand extends Command
                             {--tables= : Specific tables to generate (comma separated)}
                             {--path= : Models directory path}
                             {--namespace= : Models namespace}
-                            {--relationships : Auto generate relationships}';
+                            {--relationships : Auto generate relationships}
+                            {--force : Update existing models with relationships}';
 
     protected $description = 'Generate Eloquent models from database tables';
 
@@ -26,20 +27,28 @@ class GenerateModelsCommand extends Command
             $path = $this->option('path') ?: app_path('Models');
             $namespace = $this->option('namespace') ?: 'App\Models';
             $generateRelationships = $this->option('relationships');
+            $forceUpdate = $this->option('force');
 
             if (!File::exists($path)) {
                 File::makeDirectory($path, 0755, true);
             }
 
             $generatedCount = 0;
+            $updatedCount = 0;
 
             foreach ($tables as $table) {
-                if ($this->generateModel($table, $path, $namespace, $generateRelationships)) {
+                $result = $this->generateModel($table, $path, $namespace, $generateRelationships, $forceUpdate);
+                if ($result === 'generated') {
                     $generatedCount++;
+                } elseif ($result === 'updated') {
+                    $updatedCount++;
                 }
             }
 
             $this->info("✅ Successfully generated {$generatedCount} models!");
+            if ($updatedCount > 0) {
+                $this->info("✅ Updated {$updatedCount} existing models with relationships!");
+            }
             $this->info("📁 Models location: {$path}");
 
         } catch (Exception $e) {
@@ -70,39 +79,84 @@ class GenerateModelsCommand extends Command
         });
     }
 
-    protected function generateModel($tableName, $path, $namespace, $generateRelationships)
+    protected function generateModel($tableName, $path, $namespace, $generateRelationships, $forceUpdate)
     {
         try {
             $className = $this->getClassName($tableName);
             $modelPath = $path . '/' . $className . '.php';
 
-            if (File::exists($modelPath)) {
-                $this->warn("⚠️ Model {$className} already exists, skipping...");
-                return false;
-            }
-
             $fillable = $this->getFillableColumns($tableName);
             $casts = $this->getCasts($tableName);
             $relationships = $generateRelationships ? $this->getRelationships($tableName) : '';
+
+            if (File::exists($modelPath)) {
+                if ($forceUpdate && $relationships) {
+                    // تحديث المودل الموجود بإضافة العلاقات
+                    $this->updateExistingModel($modelPath, $relationships);
+                    $this->info("✅ Updated model with relationships: {$className}");
+                    return 'updated';
+                } else {
+                    $this->warn("⚠️ Model {$className} already exists, skipping...");
+                    return 'skipped';
+                }
+            }
 
             $modelContent = $this->buildModelContent($className, $namespace, $tableName, $fillable, $casts, $relationships);
 
             if (File::put($modelPath, $modelContent) !== false) {
                 $this->info("✅ Generated model: {$className}");
-                return true;
+                return 'generated';
             }
 
             throw new Exception("Failed to write model file: {$modelPath}");
 
         } catch (Exception $e) {
             $this->warn("⚠️ Could not generate model for {$tableName}: " . $e->getMessage());
-            return false;
+            return 'error';
         }
     }
 
     protected function getClassName($tableName)
     {
-        return str_replace(' ', '', ucwords(str_replace('_', ' ', $tableName)));
+        $singular = $this->getSingular($tableName);
+        return str_replace(' ', '', ucwords(str_replace('_', ' ', $singular)));
+    }
+
+    protected function getSingular($tableName)
+    {
+        $irregular = [
+            'people' => 'person',
+            'children' => 'child',
+            'men' => 'man',
+            'women' => 'woman',
+            'teeth' => 'tooth',
+            'feet' => 'foot',
+            'mice' => 'mouse',
+            'geese' => 'goose',
+        ];
+
+        if (isset($irregular[$tableName])) {
+            return $irregular[$tableName];
+        }
+
+        $patterns = [
+            '/(.*)ies$/' => '$1y',
+            '/(.*)ses$/' => '$1s',
+            '/(.*)xes$/' => '$1x',
+            '/(.*)ches$/' => '$1ch',
+            '/(.*)shes$/' => '$1sh',
+            '/(.*)uses$/' => '$1us',
+            '/(.*)sses$/' => '$1ss',
+            '/(.*)s$/' => '$1',
+        ];
+
+        foreach ($patterns as $pattern => $replacement) {
+            if (preg_match($pattern, $tableName)) {
+                return preg_replace($pattern, $replacement, $tableName);
+            }
+        }
+
+        return $tableName;
     }
 
     protected function getFillableColumns($tableName)
@@ -169,7 +223,7 @@ class GenerateModelsCommand extends Command
 
             foreach ($foreignKeys as $fk) {
                 $relatedModel = $this->getClassName($fk->REFERENCED_TABLE_NAME);
-                $relationshipName = strtolower($relatedModel);
+                $relationshipName = $this->getRelationshipName($fk->COLUMN_NAME, $relatedModel);
 
                 // belongsTo relationship
                 $relationships .= "\n    /**\n     * Get the {$relatedModel} that owns the {$this->getClassName($tableName)}.\n     */\n    public function {$relationshipName}()\n    {\n        return \$this->belongsTo({$relatedModel}::class, '{$fk->COLUMN_NAME}', '{$fk->REFERENCED_COLUMN_NAME}');\n    }";
@@ -188,7 +242,7 @@ class GenerateModelsCommand extends Command
 
             foreach ($referencingTables as $ref) {
                 $relatedModel = $this->getClassName($ref->TABLE_NAME);
-                $relationshipName = strtolower(str_replace('_', '', $ref->TABLE_NAME));
+                $relationshipName = $this->getPlural($relatedModel);
 
                 $relationships .= "\n    /**\n     * Get all the {$relatedModel} for the {$this->getClassName($tableName)}.\n     */\n    public function {$relationshipName}()\n    {\n        return \$this->hasMany({$relatedModel}::class, '{$ref->COLUMN_NAME}', 'id');\n    }";
             }
@@ -198,6 +252,62 @@ class GenerateModelsCommand extends Command
         }
 
         return $relationships;
+    }
+
+    protected function getRelationshipName($columnName, $relatedModel)
+    {
+        $cleanName = preg_replace('/_id$/', '', $columnName);
+        $cleanName = preg_replace('/_uuid$/', '', $cleanName);
+
+        return $cleanName;
+    }
+
+    protected function getPlural($singular)
+    {
+        $irregular = [
+            'person' => 'people',
+            'child' => 'children',
+            'man' => 'men',
+            'woman' => 'women',
+            'tooth' => 'teeth',
+            'foot' => 'feet',
+            'mouse' => 'mice',
+            'goose' => 'geese',
+        ];
+
+        if (isset($irregular[$singular])) {
+            return $irregular[$singular];
+        }
+
+        $patterns = [
+            '/(.*)y$/' => '$1ies',
+            '/(.*)s$/' => '$1ses',
+            '/(.*)x$/' => '$1xes',
+            '/(.*)ch$/' => '$1ches',
+            '/(.*)sh$/' => '$1shes',
+            '/(.*)us$/' => '$1uses',
+            '/(.*)ss$/' => '$1sses',
+            '/(.*)$/' => '$1s',
+        ];
+
+        foreach ($patterns as $pattern => $replacement) {
+            if (preg_match($pattern, $singular)) {
+                return preg_replace($pattern, $replacement, $singular);
+            }
+        }
+
+        return $singular . 's';
+    }
+
+    protected function updateExistingModel($modelPath, $relationships)
+    {
+        $content = File::get($modelPath);
+
+        $lastBrace = strrpos($content, '}');
+        if ($lastBrace !== false) {
+            $newContent = substr($content, 0, $lastBrace) . $relationships . "\n}";
+            File::put($modelPath, $newContent);
+        }
     }
 
     protected function buildModelContent($className, $namespace, $tableName, $fillable, $casts, $relationships)
