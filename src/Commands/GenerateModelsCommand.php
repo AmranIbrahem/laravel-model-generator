@@ -14,7 +14,7 @@ class GenerateModelsCommand extends Command
                             {--path= : Models directory path}
                             {--namespace= : Models namespace}
                             {--relationships : Auto generate relationships}
-                            {--force : Update existing models with relationships}';
+                            {--force : Update existing models with missing properties}';
 
     protected $description = 'Generate Eloquent models from database tables';
 
@@ -35,6 +35,7 @@ class GenerateModelsCommand extends Command
 
             $generatedCount = 0;
             $updatedCount = 0;
+            $completedCount = 0;
 
             foreach ($tables as $table) {
                 $result = $this->generateModel($table, $path, $namespace, $generateRelationships, $forceUpdate);
@@ -42,12 +43,17 @@ class GenerateModelsCommand extends Command
                     $generatedCount++;
                 } elseif ($result === 'updated') {
                     $updatedCount++;
+                } elseif ($result === 'completed') {
+                    $completedCount++;
                 }
             }
 
             $this->info("✅ Successfully generated {$generatedCount} models!");
             if ($updatedCount > 0) {
                 $this->info("✅ Updated {$updatedCount} existing models with relationships!");
+            }
+            if ($completedCount > 0) {
+                $this->info("✅ Completed {$completedCount} existing models with missing properties!");
             }
             $this->info("📁 Models location: {$path}");
 
@@ -90,11 +96,18 @@ class GenerateModelsCommand extends Command
             $relationships = $generateRelationships ? $this->getRelationships($tableName) : '';
 
             if (File::exists($modelPath)) {
-                if ($forceUpdate && $relationships) {
-                    // تحديث المودل الموجود بإضافة العلاقات
-                    $this->updateExistingModel($modelPath, $relationships);
-                    $this->info("✅ Updated model with relationships: {$className}");
-                    return 'updated';
+                if ($forceUpdate) {
+                    $result = $this->updateExistingModel($modelPath, $tableName, $fillable, $casts, $relationships);
+                    if ($result === 'updated') {
+                        $this->info("✅ Updated model with relationships: {$className}");
+                        return 'updated';
+                    } elseif ($result === 'completed') {
+                        $this->info("✅ Completed model with missing properties: {$className}");
+                        return 'completed';
+                    } else {
+                        $this->warn("⚠️ Model {$className} already complete, skipping...");
+                        return 'skipped';
+                    }
                 } else {
                     $this->warn("⚠️ Model {$className} already exists, skipping...");
                     return 'skipped';
@@ -114,6 +127,102 @@ class GenerateModelsCommand extends Command
             $this->warn("⚠️ Could not generate model for {$tableName}: " . $e->getMessage());
             return 'error';
         }
+    }
+
+    protected function updateExistingModel($modelPath, $tableName, $fillable, $casts, $relationships)
+    {
+        $content = File::get($modelPath);
+        $originalContent = $content;
+        $changesMade = false;
+
+        if (!str_contains($content, 'protected $table')) {
+            $tableProperty = "
+    /**
+     * The table associated with the model.
+     *
+     * @var string
+     */
+    protected \$table = '{$tableName}';";
+
+            $classStart = strpos($content, '{') + 1;
+            $content = substr($content, 0, $classStart) . $tableProperty . substr($content, $classStart);
+            $changesMade = true;
+        }
+
+        if (!str_contains($content, 'protected $fillable')) {
+            $fillableString = $this->arrayToString($fillable);
+            $fillableProperty = "
+    /**
+     * The attributes that are mass assignable.
+     *
+     * @var array<int, string>
+     */
+    protected \$fillable = {$fillableString};";
+
+            $tablePos = strpos($content, 'protected $table');
+            if ($tablePos !== false) {
+                $endOfTable = strpos($content, ';', $tablePos) + 1;
+                $content = substr($content, 0, $endOfTable) . $fillableProperty . substr($content, $endOfTable);
+            } else {
+                $classStart = strpos($content, '{') + 1;
+                $content = substr($content, 0, $classStart) . $fillableProperty . substr($content, $classStart);
+            }
+            $changesMade = true;
+        }
+
+        if (!str_contains($content, 'protected $casts') && !empty($casts)) {
+            $castsString = $this->buildCastsProperty($casts);
+
+            $fillablePos = strpos($content, 'protected $fillable');
+            if ($fillablePos !== false) {
+                $endOfFillable = strpos($content, ';', $fillablePos) + 1;
+                $content = substr($content, 0, $endOfFillable) . $castsString . substr($content, $endOfFillable);
+            } else {
+                $classStart = strpos($content, '{') + 1;
+                $content = substr($content, 0, $classStart) . $castsString . substr($content, $classStart);
+            }
+            $changesMade = true;
+        }
+
+        if ($relationships) {
+            $relationshipMethods = $this->extractRelationshipMethods($relationships);
+
+            foreach ($relationshipMethods as $method) {
+                $methodName = $this->extractMethodName($method);
+                if (!str_contains($content, "function {$methodName}()")) {
+                    $lastBrace = strrpos($content, '}');
+                    if ($lastBrace !== false) {
+                        $content = substr($content, 0, $lastBrace) . $method . "\n" . substr($content, $lastBrace);
+                        $changesMade = true;
+                    }
+                }
+            }
+        }
+
+        if ($changesMade && $content !== $originalContent) {
+            File::put($modelPath, $content);
+            return $relationships ? 'updated' : 'completed';
+        }
+
+        return 'no_changes';
+    }
+
+    protected function extractRelationshipMethods($relationships)
+    {
+        preg_match_all('/    \/\*\*(.*?)\*\/\s*    public function \w+\(\)\s*    \{(.*?)\n    \}/s', $relationships, $matches);
+
+        $methods = [];
+        foreach ($matches[0] as $match) {
+            $methods[] = $match;
+        }
+
+        return $methods;
+    }
+
+    protected function extractMethodName($method)
+    {
+        preg_match('/public function (\w+)\(\)/', $method, $matches);
+        return $matches[1] ?? '';
     }
 
     protected function getClassName($tableName)
@@ -225,8 +334,9 @@ class GenerateModelsCommand extends Command
                 $relatedModel = $this->getClassName($fk->REFERENCED_TABLE_NAME);
                 $relationshipName = $this->getRelationshipName($fk->COLUMN_NAME, $relatedModel);
 
-                // belongsTo relationship
-                $relationships .= "\n    /**\n     * Get the {$relatedModel} that owns the {$this->getClassName($tableName)}.\n     */\n    public function {$relationshipName}()\n    {\n        return \$this->belongsTo({$relatedModel}::class, '{$fk->COLUMN_NAME}', '{$fk->REFERENCED_COLUMN_NAME}');\n    }";
+                if (!str_contains($relationships, "function {$relationshipName}()")) {
+                    $relationships .= "\n    /**\n     * Get the {$relatedModel} that owns the {$this->getClassName($tableName)}.\n     */\n    public function {$relationshipName}()\n    {\n        return \$this->belongsTo({$relatedModel}::class, '{$fk->COLUMN_NAME}', '{$fk->REFERENCED_COLUMN_NAME}');\n    }";
+                }
             }
 
             $referencingTables = DB::select("
@@ -244,7 +354,9 @@ class GenerateModelsCommand extends Command
                 $relatedModel = $this->getClassName($ref->TABLE_NAME);
                 $relationshipName = $this->getPlural($relatedModel);
 
-                $relationships .= "\n    /**\n     * Get all the {$relatedModel} for the {$this->getClassName($tableName)}.\n     */\n    public function {$relationshipName}()\n    {\n        return \$this->hasMany({$relatedModel}::class, '{$ref->COLUMN_NAME}', 'id');\n    }";
+                if (!str_contains($relationships, "function {$relationshipName}()")) {
+                    $relationships .= "\n    /**\n     * Get all the {$relatedModel} for the {$this->getClassName($tableName)}.\n     */\n    public function {$relationshipName}()\n    {\n        return \$this->hasMany({$relatedModel}::class, '{$ref->COLUMN_NAME}', 'id');\n    }";
+                }
             }
 
         } catch (Exception $e) {
@@ -297,17 +409,6 @@ class GenerateModelsCommand extends Command
         }
 
         return $singular . 's';
-    }
-
-    protected function updateExistingModel($modelPath, $relationships)
-    {
-        $content = File::get($modelPath);
-
-        $lastBrace = strrpos($content, '}');
-        if ($lastBrace !== false) {
-            $newContent = substr($content, 0, $lastBrace) . $relationships . "\n}";
-            File::put($modelPath, $newContent);
-        }
     }
 
     protected function buildModelContent($className, $namespace, $tableName, $fillable, $casts, $relationships)
