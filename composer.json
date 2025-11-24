@@ -1,0 +1,22 @@
+{
+    "name": "amranibrahem/laravel-model-generator",
+    "description": "Auto generate Laravel models from database tables",
+    "type": "library",
+    "license": "MIT",
+    "autoload": {
+        "psr-4": {
+            "AmranIbrahem\\ModelGenerator\\": "src/"
+        }
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "AmranIbrahem\\ModelGenerator\\ModelGeneratorServiceProvider"
+            ]
+        }
+    },
+    "require": {
+        "php": "^8.0",
+        "laravel/framework": "^9.0|^10.0"
+    }
+}
