@@ -94,10 +94,11 @@ class GenerateModelsCommand extends Command
             $fillable = $this->getFillableColumns($tableName);
             $casts = $this->getCasts($tableName);
             $relationships = $generateRelationships ? $this->getRelationships($tableName) : '';
+            $phpDoc = $this->generatePhpDoc($tableName, $generateRelationships);
 
             if (File::exists($modelPath)) {
                 if ($forceUpdate) {
-                    $result = $this->updateExistingModel($modelPath, $tableName, $fillable, $casts, $relationships);
+                    $result = $this->updateExistingModel($modelPath, $tableName, $fillable, $casts, $relationships, $phpDoc);
                     if ($result === 'updated') {
                         $this->info("✅ Updated model with relationships: {$className}");
                         return 'updated';
@@ -114,7 +115,7 @@ class GenerateModelsCommand extends Command
                 }
             }
 
-            $modelContent = $this->buildModelContent($className, $namespace, $tableName, $fillable, $casts, $relationships);
+            $modelContent = $this->buildModelContent($className, $namespace, $tableName, $fillable, $casts, $relationships, $phpDoc);
 
             if (File::put($modelPath, $modelContent) !== false) {
                 $this->info("✅ Generated model: {$className}");
@@ -129,11 +130,19 @@ class GenerateModelsCommand extends Command
         }
     }
 
-    protected function updateExistingModel($modelPath, $tableName, $fillable, $casts, $relationships)
+    protected function updateExistingModel($modelPath, $tableName, $fillable, $casts, $relationships, $phpDoc)
     {
         $content = File::get($modelPath);
         $originalContent = $content;
         $changesMade = false;
+
+        if (!str_contains($content, '/**') && $phpDoc) {
+            $classPos = strpos($content, 'class');
+            if ($classPos !== false) {
+                $content = substr($content, 0, $classPos) . $phpDoc . "\n" . substr($content, $classPos);
+                $changesMade = true;
+            }
+        }
 
         if (!str_contains($content, 'protected $table')) {
             $tableProperty = "
@@ -307,6 +316,92 @@ class GenerateModelsCommand extends Command
         return $casts;
     }
 
+    protected function generatePhpDoc($tableName, $generateRelationships)
+    {
+        $columns = DB::select("SHOW COLUMNS FROM {$tableName}");
+        $phpDoc = "/**\n";
+
+        foreach ($columns as $column) {
+            $columnName = $column->Field;
+            $type = $this->getPhpType($column->Type);
+            $phpDoc .= " * @property {$type} \${$columnName}\n";
+        }
+
+        if ($generateRelationships) {
+            $relationships = $this->getRelationshipNames($tableName);
+            foreach ($relationships as $relationship) {
+                $phpDoc .= " * @property \\{$relationship['model']} \${$relationship['name']}\n";
+            }
+        }
+
+        $phpDoc .= " */";
+
+        return $phpDoc;
+    }
+
+    protected function getPhpType($mysqlType)
+    {
+        if (str_contains($mysqlType, 'int')) {
+            return 'int';
+        } elseif (str_contains($mysqlType, 'decimal') || str_contains($mysqlType, 'float') || str_contains($mysqlType, 'double')) {
+            return 'float';
+        } elseif (str_contains($mysqlType, 'bool') || str_contains($mysqlType, 'tinyint(1)')) {
+            return 'bool';
+        } elseif (str_contains($mysqlType, 'timestamp') || str_contains($mysqlType, 'datetime')) {
+            return '\\Carbon\\Carbon';
+        } elseif (str_contains($mysqlType, 'date')) {
+            return '\\Carbon\\Carbon';
+        } elseif (str_contains($mysqlType, 'json')) {
+            return 'array';
+        } else {
+            return 'string';
+        }
+    }
+
+    protected function getRelationshipNames($tableName)
+    {
+        $relationships = [];
+
+        try {
+            $foreignKeys = DB::select("
+                SELECT COLUMN_NAME, REFERENCED_TABLE_NAME
+                FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE
+                WHERE REFERENCED_TABLE_NAME IS NOT NULL
+                AND TABLE_SCHEMA = ?
+                AND TABLE_NAME = ?
+            ", [config('database.connections.mysql.database'), $tableName]);
+
+            foreach ($foreignKeys as $fk) {
+                $relatedModel = $this->getClassName($fk->REFERENCED_TABLE_NAME);
+                $relationshipName = $this->getBelongsToRelationshipName($fk->COLUMN_NAME);
+                $relationships[] = [
+                    'name' => $relationshipName,
+                    'model' => 'App\\Models\\' . $relatedModel
+                ];
+            }
+
+            $referencingTables = DB::select("
+                SELECT TABLE_NAME, COLUMN_NAME
+                FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE
+                WHERE REFERENCED_TABLE_NAME = ?
+                AND TABLE_SCHEMA = ?
+            ", [$tableName, config('database.connections.mysql.database')]);
+
+            foreach ($referencingTables as $ref) {
+                $relatedModel = $this->getClassName($ref->TABLE_NAME);
+                $relationshipName = $this->getHasManyRelationshipName($ref->TABLE_NAME);
+                $relationships[] = [
+                    'name' => $relationshipName,
+                    'model' => 'App\\Models\\' . $relatedModel
+                ];
+            }
+
+        } catch (Exception $e) {
+        }
+
+        return $relationships;
+    }
+
     protected function getRelationships($tableName)
     {
         $relationships = '';
@@ -400,7 +495,7 @@ class GenerateModelsCommand extends Command
         return lcfirst($string);
     }
 
-    protected function buildModelContent($className, $namespace, $tableName, $fillable, $casts, $relationships)
+    protected function buildModelContent($className, $namespace, $tableName, $fillable, $casts, $relationships, $phpDoc)
     {
         $fillableString = $this->arrayToString($fillable);
         $castsString = !empty($casts) ? $this->buildCastsProperty($casts) : '';
@@ -412,6 +507,7 @@ namespace {$namespace};
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 
+{$phpDoc}
 class {$className} extends Model
 {
     use HasFactory;
