@@ -137,11 +137,6 @@ class GenerateModelsCommand extends Command
 
         if (!str_contains($content, 'protected $table')) {
             $tableProperty = "
-    /**
-     * The table associated with the model.
-     *
-     * @var string
-     */
     protected \$table = '{$tableName}';";
 
             $classStart = strpos($content, '{') + 1;
@@ -152,11 +147,6 @@ class GenerateModelsCommand extends Command
         if (!str_contains($content, 'protected $fillable')) {
             $fillableString = $this->arrayToString($fillable);
             $fillableProperty = "
-    /**
-     * The attributes that are mass assignable.
-     *
-     * @var array<int, string>
-     */
     protected \$fillable = {$fillableString};";
 
             $tablePos = strpos($content, 'protected $table');
@@ -209,7 +199,7 @@ class GenerateModelsCommand extends Command
 
     protected function extractRelationshipMethods($relationships)
     {
-        preg_match_all('/    \/\*\*(.*?)\*\/\s*    public function \w+\(\)\s*    \{(.*?)\n    \}/s', $relationships, $matches);
+        preg_match_all('/    public function \w+\(\)\s*    \{(.*?)\n    \}/s', $relationships, $matches);
 
         $methods = [];
         foreach ($matches[0] as $match) {
@@ -338,10 +328,14 @@ class GenerateModelsCommand extends Command
 
             foreach ($foreignKeys as $fk) {
                 $relatedModel = $this->getClassName($fk->REFERENCED_TABLE_NAME);
-                $relationshipName = $this->getRelationshipName($fk->COLUMN_NAME, $relatedModel);
+                $relationshipName = $this->getBelongsToRelationshipName($fk->COLUMN_NAME);
 
                 if (!$this->relationshipExistsCaseInsensitive($relationships, $relationshipName)) {
-                    $relationships .= "\n    /**\n     * Get the {$relatedModel} that owns the {$this->getClassName($tableName)}.\n     */\n    public function {$relationshipName}()\n    {\n        return \$this->belongsTo({$relatedModel}::class, '{$fk->COLUMN_NAME}', '{$fk->REFERENCED_COLUMN_NAME}');\n    }";
+                    $relationships .= "
+    public function {$relationshipName}()
+    {
+        return \$this->belongsTo({$relatedModel}::class, '{$fk->COLUMN_NAME}', '{$fk->REFERENCED_COLUMN_NAME}');
+    }";
                 }
             }
 
@@ -358,10 +352,14 @@ class GenerateModelsCommand extends Command
 
             foreach ($referencingTables as $ref) {
                 $relatedModel = $this->getClassName($ref->TABLE_NAME);
-                $relationshipName = $this->getPluralRelationshipName($relatedModel);
+                $relationshipName = $this->getHasManyRelationshipName($ref->TABLE_NAME);
 
                 if (!$this->relationshipExistsCaseInsensitive($relationships, $relationshipName)) {
-                    $relationships .= "\n    /**\n     * Get all the {$relatedModel} for the {$this->getClassName($tableName)}.\n     */\n    public function {$relationshipName}()\n    {\n        return \$this->hasMany({$relatedModel}::class, '{$ref->COLUMN_NAME}', 'id');\n    }";
+                    $relationships .= "
+    public function {$relationshipName}()
+    {
+        return \$this->hasMany({$relatedModel}::class, '{$ref->COLUMN_NAME}', 'id');
+    }";
                 }
             }
 
@@ -378,49 +376,28 @@ class GenerateModelsCommand extends Command
         return preg_match($pattern, $relationships);
     }
 
-    protected function getRelationshipName($columnName, $relatedModel)
+    protected function getBelongsToRelationshipName($columnName)
     {
-        $cleanName = preg_replace('/_id$/', '', $columnName);
-        $cleanName = preg_replace('/_uuid$/', '', $cleanName);
+        $relationshipName = preg_replace('/_id$/', '', $columnName);
+        $relationshipName = preg_replace('/_uuid$/', '', $relationshipName);
 
-        return lcfirst($cleanName);
+        return $this->snakeToCamel($relationshipName);
     }
 
-    protected function getPluralRelationshipName($singular)
+    protected function getHasManyRelationshipName($relatedTable)
     {
-        $irregular = [
-            'person' => 'people',
-            'child' => 'children',
-            'man' => 'men',
-            'woman' => 'women',
-            'tooth' => 'teeth',
-            'foot' => 'feet',
-            'mouse' => 'mice',
-            'goose' => 'geese',
-        ];
+        $relationshipName = $relatedTable;
 
-        if (isset($irregular[$singular])) {
-            return lcfirst($irregular[$singular]);
-        }
+        return $this->snakeToCamel($relationshipName);
+    }
 
-        $patterns = [
-            '/(.*)y$/' => '$1ies',
-            '/(.*)s$/' => '$1ses',
-            '/(.*)x$/' => '$1xes',
-            '/(.*)ch$/' => '$1ches',
-            '/(.*)sh$/' => '$1shes',
-            '/(.*)us$/' => '$1uses',
-            '/(.*)ss$/' => '$1sses',
-            '/(.*)$/' => '$1s',
-        ];
+    protected function snakeToCamel($string)
+    {
+        $string = str_replace('_', ' ', $string);
+        $string = ucwords($string);
+        $string = str_replace(' ', '', $string);
 
-        foreach ($patterns as $pattern => $replacement) {
-            if (preg_match($pattern, $singular)) {
-                return lcfirst(preg_replace($pattern, $replacement, $singular));
-            }
-        }
-
-        return lcfirst($singular . 's');
+        return lcfirst($string);
     }
 
     protected function buildModelContent($className, $namespace, $tableName, $fillable, $casts, $relationships)
@@ -439,18 +416,8 @@ class {$className} extends Model
 {
     use HasFactory;
 
-    /**
-     * The table associated with the model.
-     *
-     * @var string
-     */
     protected \$table = '{$tableName}';
 
-    /**
-     * The attributes that are mass assignable.
-     *
-     * @var array<int, string>
-     */
     protected \$fillable = {$fillableString};
 {$castsString}{$relationships}
 }";
@@ -461,11 +428,6 @@ class {$className} extends Model
         $castsString = $this->arrayToString($casts, true);
 
         return "
-    /**
-     * The attributes that should be cast.
-     *
-     * @var array<string, string>
-     */
     protected \$casts = {$castsString};
 ";
     }
