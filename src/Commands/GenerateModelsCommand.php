@@ -73,15 +73,69 @@ class GenerateModelsCommand extends Command
             return explode(',', $specificTables);
         }
 
+        $connection = config('database.default');
+        $database = config("database.connections.{$connection}.database");
+
+        switch ($connection) {
+            case 'pgsql':
+                return $this->getPostgresTables($database);
+            case 'sqlite':
+                return $this->getSqliteTables();
+            case 'mysql':
+            default:
+                return $this->getMysqlTables($database);
+        }
+    }
+
+    protected function getMysqlTables($database)
+    {
         $tables = DB::select('SHOW TABLES');
         $tableNames = [];
 
         foreach ($tables as $table) {
-            $tableNames[] = $table->{'Tables_in_' . config('database.connections.mysql.database')};
+            $tableNames[] = $table->{'Tables_in_' . $database};
         }
 
         return array_filter($tableNames, function ($table) {
             return !in_array($table, ['migrations', 'password_reset_tokens', 'failed_jobs', 'personal_access_tokens']);
+        });
+    }
+
+    protected function getPostgresTables($database)
+    {
+        $tables = DB::select("
+            SELECT table_name
+            FROM information_schema.tables
+            WHERE table_schema = 'public'
+            AND table_type = 'BASE TABLE'
+        ");
+
+        $tableNames = [];
+        foreach ($tables as $table) {
+            $tableNames[] = $table->table_name;
+        }
+
+        return array_filter($tableNames, function ($table) {
+            return !in_array($table, ['migrations']);
+        });
+    }
+
+    protected function getSqliteTables()
+    {
+        $tables = DB::select("
+            SELECT name as table_name
+            FROM sqlite_master
+            WHERE type = 'table'
+            AND name != 'sqlite_sequence'
+        ");
+
+        $tableNames = [];
+        foreach ($tables as $table) {
+            $tableNames[] = $table->table_name;
+        }
+
+        return array_filter($tableNames, function ($table) {
+            return !in_array($table, ['migrations']);
         });
     }
 
@@ -275,12 +329,61 @@ class GenerateModelsCommand extends Command
 
     protected function getFillableColumns($tableName)
     {
+        $connection = config('database.default');
+
+        switch ($connection) {
+            case 'pgsql':
+                return $this->getPostgresColumns($tableName);
+            case 'sqlite':
+                return $this->getSqliteColumns($tableName);
+            case 'mysql':
+            default:
+                return $this->getMysqlColumns($tableName);
+        }
+    }
+
+    protected function getMysqlColumns($tableName)
+    {
         $columns = DB::select("SHOW COLUMNS FROM {$tableName}");
         $fillable = [];
 
         foreach ($columns as $column) {
             $columnName = $column->Field;
+            if (!in_array($columnName, ['id', 'created_at', 'updated_at', 'deleted_at', 'remember_token'])) {
+                $fillable[] = $columnName;
+            }
+        }
 
+        return $fillable;
+    }
+
+    protected function getPostgresColumns($tableName)
+    {
+        $columns = DB::select("
+            SELECT column_name as field, data_type, is_nullable
+            FROM information_schema.columns
+            WHERE table_name = ?
+            ORDER BY ordinal_position
+        ", [$tableName]);
+
+        $fillable = [];
+        foreach ($columns as $column) {
+            $columnName = $column->field;
+            if (!in_array($columnName, ['id', 'created_at', 'updated_at', 'deleted_at', 'remember_token'])) {
+                $fillable[] = $columnName;
+            }
+        }
+
+        return $fillable;
+    }
+
+    protected function getSqliteColumns($tableName)
+    {
+        $columns = DB::select("PRAGMA table_info({$tableName})");
+        $fillable = [];
+
+        foreach ($columns as $column) {
+            $columnName = $column->name;
             if (!in_array($columnName, ['id', 'created_at', 'updated_at', 'deleted_at', 'remember_token'])) {
                 $fillable[] = $columnName;
             }
@@ -290,6 +393,21 @@ class GenerateModelsCommand extends Command
     }
 
     protected function getCasts($tableName)
+    {
+        $connection = config('database.default');
+
+        switch ($connection) {
+            case 'pgsql':
+                return $this->getPostgresCasts($tableName);
+            case 'sqlite':
+                return $this->getSqliteCasts($tableName);
+            case 'mysql':
+            default:
+                return $this->getMysqlCasts($tableName);
+        }
+    }
+
+    protected function getMysqlCasts($tableName)
     {
         $columns = DB::select("SHOW COLUMNS FROM {$tableName}");
         $casts = [];
@@ -316,21 +434,107 @@ class GenerateModelsCommand extends Command
         return $casts;
     }
 
+    protected function getPostgresCasts($tableName)
+    {
+        $columns = DB::select("
+            SELECT column_name as field, data_type, is_nullable
+            FROM information_schema.columns
+            WHERE table_name = ?
+            ORDER BY ordinal_position
+        ", [$tableName]);
+
+        $casts = [];
+        foreach ($columns as $column) {
+            $columnName = $column->field;
+            $type = $column->data_type;
+
+            if (str_contains($type, 'timestamp') || str_contains($type, 'datetime')) {
+                $casts[$columnName] = 'datetime';
+            } elseif (str_contains($type, 'date')) {
+                $casts[$columnName] = 'date';
+            } elseif (str_contains($type, 'json')) {
+                $casts[$columnName] = 'array';
+            } elseif (str_contains($type, 'boolean')) {
+                $casts[$columnName] = 'boolean';
+            } elseif (str_contains($type, 'integer') || str_contains($type, 'bigint') || str_contains($type, 'smallint')) {
+                $casts[$columnName] = 'integer';
+            } elseif (str_contains($type, 'numeric') || str_contains($type, 'real') || str_contains($type, 'double precision')) {
+                $casts[$columnName] = 'float';
+            }
+        }
+
+        return $casts;
+    }
+
+    protected function getSqliteCasts($tableName)
+    {
+        $columns = DB::select("PRAGMA table_info({$tableName})");
+        $casts = [];
+
+        foreach ($columns as $column) {
+            $columnName = $column->name;
+            $type = strtolower($column->type);
+
+            if (str_contains($type, 'timestamp') || str_contains($type, 'datetime')) {
+                $casts[$columnName] = 'datetime';
+            } elseif (str_contains($type, 'date')) {
+                $casts[$columnName] = 'date';
+            } elseif (str_contains($type, 'json')) {
+                $casts[$columnName] = 'array';
+            } elseif (str_contains($type, 'boolean') || str_contains($type, 'bool')) {
+                $casts[$columnName] = 'boolean';
+            } elseif (str_contains($type, 'int') || str_contains($type, 'integer')) {
+                $casts[$columnName] = 'integer';
+            } elseif (str_contains($type, 'real') || str_contains($type, 'float') || str_contains($type, 'double') || str_contains($type, 'numeric')) {
+                $casts[$columnName] = 'float';
+            }
+        }
+
+        return $casts;
+    }
+
     protected function generatePhpDoc($tableName, $generateRelationships)
     {
-        $columns = DB::select("SHOW COLUMNS FROM {$tableName}");
+        $connection = config('database.default');
+
+        switch ($connection) {
+            case 'pgsql':
+                $columns = DB::select("
+                    SELECT column_name as Field, data_type as Type, is_nullable as Null
+                    FROM information_schema.columns
+                    WHERE table_name = ?
+                    ORDER BY ordinal_position
+                ", [$tableName]);
+                break;
+            case 'sqlite':
+                $columns = DB::select("PRAGMA table_info({$tableName})");
+                $columns = array_map(function($col) {
+                    return (object)[
+                        'Field' => $col->name,
+                        'Type' => $col->type,
+                        'Null' => $col->notnull ? 'NO' : 'YES'
+                    ];
+                }, $columns);
+                break;
+            case 'mysql':
+            default:
+                $columns = DB::select("SHOW COLUMNS FROM {$tableName}");
+                break;
+        }
+
         $phpDoc = "/**\n";
 
         foreach ($columns as $column) {
             $columnName = $column->Field;
             $type = $this->getPhpType($column->Type, $column->Null);
-            $phpDoc .= " * @property {$type} \${$columnName}\n";
+            $access = $this->getPropertyAccess($columnName);
+            $phpDoc .= " * @property{$access} {$type} \${$columnName}\n";
         }
 
         if ($generateRelationships) {
             $relationships = $this->getRelationshipNames($tableName);
             foreach ($relationships as $relationship) {
-                $phpDoc .= " * @property \\{$relationship['model']}[] \${$relationship['name']}\n";
+                $phpDoc .= " * @property-read \\{$relationship['model']}[] \${$relationship['name']}\n";
             }
         }
 
@@ -345,7 +549,7 @@ class GenerateModelsCommand extends Command
 
         if (str_contains($mysqlType, 'int')) {
             return 'int' . $nullable;
-        } elseif (str_contains($mysqlType, 'decimal') || str_contains($mysqlType, 'float') || str_contains($mysqlType, 'double')) {
+        } elseif (str_contains($mysqlType, 'decimal') || str_contains($mysqlType, 'float') || str_contains($mysqlType, 'double') || str_contains($mysqlType, 'numeric') || str_contains($mysqlType, 'real')) {
             return 'float' . $nullable;
         } elseif (str_contains($mysqlType, 'bool') || str_contains($mysqlType, 'tinyint(1)')) {
             return 'bool' . $nullable;
@@ -358,6 +562,17 @@ class GenerateModelsCommand extends Command
         } else {
             return 'string' . $nullable;
         }
+    }
+
+    protected function getPropertyAccess($columnName)
+    {
+        $readOnlyColumns = ['id', 'created_at', 'updated_at', 'deleted_at'];
+
+        if (in_array($columnName, $readOnlyColumns)) {
+            return '-read';
+        }
+
+        return '';
     }
 
     protected function getRelationshipNames($tableName)
@@ -395,6 +610,14 @@ class GenerateModelsCommand extends Command
                 $relationships[] = [
                     'name' => $relationshipName,
                     'model' => 'App\\Models\\' . $relatedModel
+                ];
+            }
+
+            $manyToManyRelationships = $this->getManyToManyRelationships($tableName);
+            foreach ($manyToManyRelationships as $relationship) {
+                $relationships[] = [
+                    'name' => $relationship['name'],
+                    'model' => 'App\\Models\\' . $relationship['related_model']
                 ];
             }
 
@@ -460,11 +683,119 @@ class GenerateModelsCommand extends Command
                 }
             }
 
+            $manyToManyRelationships = $this->getManyToManyRelationships($tableName);
+            foreach ($manyToManyRelationships as $relationship) {
+                $relationships .= "
+    public function {$relationship['name']}()
+    {
+        return \$this->belongsToMany({$relationship['related_model']}::class, '{$relationship['pivot_table']}'{$relationship['keys']});
+    }";
+            }
+
         } catch (Exception $e) {
             $this->warn("⚠️ Could not generate relationships for {$tableName}: " . $e->getMessage());
         }
 
         return $relationships;
+    }
+
+    protected function getManyToManyRelationships($tableName)
+    {
+        $relationships = [];
+
+        try {
+            $pivotTables = DB::select("
+                SELECT TABLE_NAME
+                FROM INFORMATION_SCHEMA.TABLES
+                WHERE TABLE_SCHEMA = ?
+                AND TABLE_NAME LIKE '%{$tableName}%'
+                AND TABLE_NAME != '{$tableName}'
+                AND (TABLE_NAME LIKE '%_%_%' OR TABLE_NAME REGEXP '.*[0-9].*')
+            ", [config('database.connections.mysql.database')]);
+
+            foreach ($pivotTables as $pivotTable) {
+                $columns = DB::select("SHOW COLUMNS FROM {$pivotTable->TABLE_NAME}");
+                $foreignKeys = [];
+
+                foreach ($columns as $column) {
+                    if (str_contains($column->Field, '_id')) {
+                        $foreignKeys[] = $column->Field;
+                    }
+                }
+
+                if (count($foreignKeys) === 2) {
+                    $otherForeignKey = array_filter($foreignKeys, function($fk) use ($tableName) {
+                        return !str_contains($fk, $tableName . '_id');
+                    });
+
+                    if (count($otherForeignKey) === 1) {
+                        $otherKey = reset($otherForeignKey);
+                        $relatedTable = str_replace('_id', '', $otherKey);
+                        $relatedModel = $this->getClassName($relatedTable);
+
+                        $relationships[] = [
+                            'name' => $this->getPluralRelationshipName($relatedModel),
+                            'related_model' => $relatedModel,
+                            'pivot_table' => $pivotTable->TABLE_NAME,
+                            'keys' => $this->getPivotKeys($tableName, $relatedTable, $foreignKeys)
+                        ];
+                    }
+                }
+            }
+
+        } catch (Exception $e) {
+        }
+
+        return $relationships;
+    }
+
+    protected function getPivotKeys($tableName, $relatedTable, $foreignKeys)
+    {
+        $localKey = $tableName . '_id';
+        $relatedKey = $relatedTable . '_id';
+
+        if (in_array($localKey, $foreignKeys) && in_array($relatedKey, $foreignKeys)) {
+            return ", '{$localKey}', '{$relatedKey}'";
+        }
+
+        return '';
+    }
+
+    protected function getPluralRelationshipName($singular)
+    {
+        $irregular = [
+            'person' => 'people',
+            'child' => 'children',
+            'man' => 'men',
+            'woman' => 'women',
+            'tooth' => 'teeth',
+            'foot' => 'feet',
+            'mouse' => 'mice',
+            'goose' => 'geese',
+        ];
+
+        if (isset($irregular[$singular])) {
+            return lcfirst($irregular[$singular]);
+        }
+
+        $patterns = [
+            '/(.*)y$/' => '$1ies',
+            '/(.*)s$/' => '$1ses',
+            '/(.*)x$/' => '$1xes',
+            '/(.*)ch$/' => '$1ches',
+            '/(.*)sh$/' => '$1shes',
+            '/(.*)us$/' => '$1uses',
+            '/(.*)ss$/' => '$1sses',
+            '/(.*)$/' => '$1s',
+        ];
+
+        foreach ($patterns as $pattern => $replacement) {
+            if (preg_match($pattern, $singular)) {
+                return lcfirst(preg_replace($pattern, $replacement, $singular));
+            }
+        }
+
+        return lcfirst($singular . 's');
     }
 
     protected function relationshipExistsCaseInsensitive($relationships, $relationshipName)
