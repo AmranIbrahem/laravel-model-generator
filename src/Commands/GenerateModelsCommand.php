@@ -358,7 +358,7 @@ class GenerateModelsCommand extends Command
 
             foreach ($referencingTables as $ref) {
                 $relatedModel = $this->getClassName($ref->TABLE_NAME);
-                $relationshipName = $this->getPlural($relatedModel);
+                $relationshipName = $this->getPluralRelationshipName($relatedModel);
 
                 if (!$this->relationshipExistsCaseInsensitive($relationships, $relationshipName)) {
                     $relationships .= "\n    /**\n     * Get all the {$relatedModel} for the {$this->getClassName($tableName)}.\n     */\n    public function {$relationshipName}()\n    {\n        return \$this->hasMany({$relatedModel}::class, '{$ref->COLUMN_NAME}', 'id');\n    }";
@@ -383,10 +383,10 @@ class GenerateModelsCommand extends Command
         $cleanName = preg_replace('/_id$/', '', $columnName);
         $cleanName = preg_replace('/_uuid$/', '', $cleanName);
 
-        return $cleanName;
+        return lcfirst($cleanName);
     }
 
-    protected function getPlural($singular)
+    protected function getPluralRelationshipName($singular)
     {
         $irregular = [
             'person' => 'people',
@@ -400,7 +400,7 @@ class GenerateModelsCommand extends Command
         ];
 
         if (isset($irregular[$singular])) {
-            return $irregular[$singular];
+            return lcfirst($irregular[$singular]);
         }
 
         $patterns = [
@@ -416,11 +416,11 @@ class GenerateModelsCommand extends Command
 
         foreach ($patterns as $pattern => $replacement) {
             if (preg_match($pattern, $singular)) {
-                return preg_replace($pattern, $replacement, $singular);
+                return lcfirst(preg_replace($pattern, $replacement, $singular));
             }
         }
 
-        return $singular . 's';
+        return lcfirst($singular . 's');
     }
 
     protected function buildModelContent($className, $namespace, $tableName, $fillable, $casts, $relationships)
