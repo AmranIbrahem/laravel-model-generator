@@ -323,14 +323,14 @@ class GenerateModelsCommand extends Command
 
         foreach ($columns as $column) {
             $columnName = $column->Field;
-            $type = $this->getPhpType($column->Type);
+            $type = $this->getPhpType($column->Type, $column->Null);
             $phpDoc .= " * @property {$type} \${$columnName}\n";
         }
 
         if ($generateRelationships) {
             $relationships = $this->getRelationshipNames($tableName);
             foreach ($relationships as $relationship) {
-                $phpDoc .= " * @property \\{$relationship['model']} \${$relationship['name']}\n";
+                $phpDoc .= " * @property \\{$relationship['model']}[] \${$relationship['name']}\n";
             }
         }
 
@@ -339,22 +339,24 @@ class GenerateModelsCommand extends Command
         return $phpDoc;
     }
 
-    protected function getPhpType($mysqlType)
+    protected function getPhpType($mysqlType, $isNullable)
     {
+        $nullable = $isNullable === 'YES' ? '|null' : '';
+
         if (str_contains($mysqlType, 'int')) {
-            return 'int';
+            return 'int' . $nullable;
         } elseif (str_contains($mysqlType, 'decimal') || str_contains($mysqlType, 'float') || str_contains($mysqlType, 'double')) {
-            return 'float';
+            return 'float' . $nullable;
         } elseif (str_contains($mysqlType, 'bool') || str_contains($mysqlType, 'tinyint(1)')) {
-            return 'bool';
+            return 'bool' . $nullable;
         } elseif (str_contains($mysqlType, 'timestamp') || str_contains($mysqlType, 'datetime')) {
-            return '\\Carbon\\Carbon';
+            return '\\Carbon\\Carbon' . $nullable;
         } elseif (str_contains($mysqlType, 'date')) {
-            return '\\Carbon\\Carbon';
+            return '\\Carbon\\Carbon' . $nullable;
         } elseif (str_contains($mysqlType, 'json')) {
-            return 'array';
+            return 'array' . $nullable;
         } else {
-            return 'string';
+            return 'string' . $nullable;
         }
     }
 
