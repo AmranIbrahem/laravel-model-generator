@@ -1,22 +1,70 @@
 {
     "name": "amranibrahem/laravel-model-generator",
-    "description": "Auto generate Laravel models from database tables",
+    "description": "Automatically generate Eloquent models from database tables with professional PHPDoc, relationships, and multi-database support",
+    "keywords": [
+        "laravel",
+        "model",
+        "generator",
+        "eloquent",
+        "database",
+        "relationships",
+        "phpdoc",
+        "auto-generate",
+        "mysql",
+        "postgresql",
+        "sqlite",
+        "migration",
+        "schema"
+    ],
+    "homepage": "https://github.com/amranibrahem/laravel-model-generator",
     "type": "library",
     "license": "MIT",
+    "authors": [
+        {
+            "name": "Amran Ibrahem",
+            "email": "amranibrahem2001@gmail.com",
+            "homepage": "https://github.com/amranibrahem",
+            "role": "Developer"
+        }
+    ],
+    "require": {
+        "php": "^8.0",
+        "laravel/framework": "^9.0|^10.0|^11.0"
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^9.0|^10.0",
+        "orchestra/testbench": "^7.0|^8.0"
+    },
     "autoload": {
         "psr-4": {
             "AmranIbrahem\\ModelGenerator\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "AmranIbrahem\\ModelGenerator\\Tests\\": "tests/"
         }
     },
     "extra": {
         "laravel": {
             "providers": [
                 "AmranIbrahem\\ModelGenerator\\ModelGeneratorServiceProvider"
-            ]
+            ],
+            "aliases": {
+                "ModelGenerator": "AmranIbrahem\\ModelGenerator\\Facades\\ModelGenerator"
+            }
         }
     },
-    "require": {
-        "php": "^8.0",
-        "laravel/framework": "^9.0|^10.0"
-    }
+    "scripts": {
+        "test": "vendor/bin/phpunit",
+        "test-coverage": "vendor/bin/phpunit --coverage-html coverage"
+    },
+    "config": {
+        "sort-packages": true,
+        "allow-plugins": {
+            "pestphp/pest-plugin": true
+        }
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true
 }
