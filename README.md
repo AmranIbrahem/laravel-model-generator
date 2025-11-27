@@ -164,13 +164,6 @@ class User extends Model
 | Zero Configuration | ✅ | ❌ | ❌ |
 | Many-to-Many Detection | ✅ | ❌ | ✅ |
 
-## 🤝 Contributing
-
-Please see [CONTRIBUTING](CONTRIBUTING.md) for details. We welcome all contributions!
-
-## 📝 Changelog
-
-Please see [CHANGELOG](CHANGELOG.md) for more information on what has changed recently.
 
 ## 🐛 Reporting Issues
 
