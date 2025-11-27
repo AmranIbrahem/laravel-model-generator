@@ -1,0 +1,46 @@
+# Dependencies
+/vendor/
+node_modules/
+
+# Environment files
+.env
+.env.local
+.env.production
+
+# Laravel specific
+/bootstrap/cache/*
+/storage/*.key
+/public/storage
+/public/hot
+
+# Testing
+/coverage/
+
+# IDE
+/.idea/
+/.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+laravel.log
+
+# Package manager
+composer.lock
+package-lock.json
+yarn.lock
+
+# Deployment
+/.github/workflows/
+/build/
+
+# Local development
+/.phpunit.result.cache
+
+# Keep these files
+!.gitkeep
