@@ -2,11 +2,6 @@
 
 🚀 **Generate Eloquent Models Automatically from Database Tables**
 
-[![Latest Version](https://img.shields.io/packagist/v/amranibrahem/laravel-model-generator.svg)](https://packagist.org/packages/amranibrahem/laravel-model-generator)
-[![Total Downloads](https://img.shields.io/packagist/dt/amranibrahem/laravel-model-generator.svg)](https://packagist.org/packages/amranibrahem/laravel-model-generator)
-[![License](https://img.shields.io/packagist/l/amranibrahem/laravel-model-generator.svg)](https://packagist.org/packages/amranibrahem/laravel-model-generator)
-[![PHP Version](https://img.shields.io/packagist/php-v/amranibrahem/laravel-model-generator.svg)](https://packagist.org/packages/amranibrahem/laravel-model-generator)
-
 A powerful Laravel package that automatically generates Eloquent models from your database tables with professional PHPDoc, relationships, and casting.
 
 ## ✨ Features
